@@ -1,0 +1,13 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+/output/*
+!/output/.gitkeep
+/figures/*
+!/figures/.gitkeep
+/supplementary_material/*
+!/supplementary_material/.gitkeep
+/manuscript/
+/archive/
+/old/
