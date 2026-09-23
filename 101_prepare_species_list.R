@@ -93,10 +93,12 @@ if (requireNamespace("rWCVPdata", quietly = TRUE)) {
               by = "basionym_plant_name_id")
 
   dat <- dat %>% left_join(bas, by = "plant_name_id")
-  message("Basionyms found in WCVP: ", sum(!is.na(dat$basionym)))
+  wcvp_source <- paste0("rWCVPdata ", packageVersion("rWCVPdata"))
+  message("Basionyms found in WCVP (", wcvp_source, "): ", sum(!is.na(dat$basionym)))
 } else {
   message("rWCVPdata not installed: basionym years not added. ",
           "Recombinations keep the year of the combination (see is_recombination).")
+  wcvp_source <- NA_character_
   dat <- dat %>% mutate(basionym_plant_name_id = NA_character_,
                         basionym = NA_character_,
                         basionym_author = NA_character_,
@@ -109,6 +111,25 @@ if (nrow(no_bas) > 0) {
   warning(nrow(no_bas), " recombination(s) without basionym year; using the year of ",
           "the combination: ", paste(no_bas$taxon_name, collapse = ", "))
 }
+
+# Provenance of the year used:
+#   "raw data"       = year column of the input data (Andressa already replaced
+#                      most combination years by the basionym year manually)
+#   "WCVP basionym"  = year taken from the basionym in rWCVPdata, because it
+#                      differs from the year in the raw data
+dat <- dat %>%
+  mutate(year_changed = !is.na(basionym_year) & basionym_year != year,
+         year_source  = ifelse(year_changed,
+                               paste0("WCVP basionym (", wcvp_source, ")"),
+                               "raw data"))
+
+changed <- dat %>%
+  filter(year_changed) %>%
+  select(plant_name_id, taxon_name, authors, year_raw = year, publication,
+         basionym, basionym_year, year_source)
+write_csv(changed, "output/year_changes.csv")
+message("Species whose year was changed from the raw data: ", nrow(changed),
+        " (see output/year_changes.csv)")
 
 dat <- dat %>%
   mutate(year_first_description = ifelse(!is.na(basionym_year), basionym_year, year),
@@ -144,6 +165,8 @@ outp <- dat %>%
             basionym,
             basionym_year,
             year_first_description,             # basionym year if recombination
+            year_source,                        # where year_first_description comes from
+            year_changed,                       # TRUE if different from raw `year`
             author_first_description,
             species_name_first_description,
             decade_first_description,
