@@ -27,7 +27,8 @@ Run the scripts in numerical order from the project root
 | Script | Status | Description |
 |---|---|---|
 | `101_prepare_species_list.R` | done | Cleans species list, assigns region, year of first description (basionym year for recombinations) |
-| `201_asymptotic_models.R` | to do | Logistic / Michaelis-Menten fits, total and per region / genus |
+| `201_asymptotic_models.R` | done | Logistic / Michaelis-Menten fits, total and per region / genus |
+| `202_hindcast.R` | done | Model validation: fit with data up to 1980/1990/2000/2005, predict descriptions until 2025, compare logistic, Michaelis-Menten and quasi-Poisson (with/without zero years) |
 | `301_figure_overall_accumulation.R` | to do | Main accumulation figure |
 
 ## Notes on the data
@@ -37,6 +38,12 @@ Run the scripts in numerical order from the project root
 - `year` in the raw data is the year of the accepted name. For recombinations
   the basionym year is taken from WCVP via the `rWCVPdata` package if installed:
   `install.packages("rWCVPdata", repos = c("https://matildabrown.github.io/drat", "https://cloud.r-project.org"))`
+
+- Quasi-Poisson (Bebber et al. 2007) is fitted on annual counts including
+  years with 0 descriptions (`zero_fill = TRUE` in `fit_quasipoisson()`).
+  Its CI comes from a parametric bootstrap keeping only draws whose projected
+  description rate reaches ~0 (`share_converged` = proportion kept; no CI if
+  < 0.5, e.g. Afrotropics and Xerophyta).
 
 ## Packages
 
