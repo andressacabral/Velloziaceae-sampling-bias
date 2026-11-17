@@ -28,6 +28,11 @@ load("output/velloziaceae_data_for_analyses.rda")   # object: outp
 # sigmoid; e.g. Asia = 2 spp., Barbaceniopsis = 4 spp.)
 min_species <- 20
 
+# The quasi-Poisson check extrapolates a cubic polynomial 300 years ahead; with
+# few informative years it can diverge (K -> infinity). K values larger than
+# this multiple of the observed species number are set to NA (not interpretable).
+qp_max_ratio <- 5
+
 # Years to extrapolate the curves into the future
 extra_years_overall <- 150
 extra_years_groups  <- 80
@@ -71,7 +76,8 @@ overall_table <- overall_models %>%
   select(model, a_estimate, a_lwr, a_upr, observed, missing, complete_pct,
          AIC, year_min, year_latest)
 
-# Quasi-Poisson check (after overall_table exists)
+# Quasi-Poisson (annual counts incl. years with 0 descriptions; CI by
+# parametric bootstrap, see fit_quasipoisson() in 000_helper_functions.R)
 qp_overall <- fit_quasipoisson(peryear, t_col = "t", y_col = "y")
 message(sprintf(
   "Quasi-Poisson K (overall): %.0f | completeness: %.3f | ratio vs logistic: %.3f",
@@ -79,7 +85,10 @@ message(sprintf(
   qp_overall$K_qp / overall_table$a_estimate[overall_table$model == "Logistic"]))
 
 overall_table <- overall_table %>%
-  mutate(K_quasipoisson = qp_overall$K_qp)
+  mutate(K_quasipoisson     = qp_overall$K_qp,
+         K_quasipoisson_lwr = qp_overall$K_qp_lwr,
+         K_quasipoisson_upr = qp_overall$K_qp_upr,
+         qp_share_converged = qp_overall$share_converged)
 
 print(overall_table)
 
@@ -108,7 +117,16 @@ group_table <- function(fits, series, group_col) {
     group_by(across(all_of(group_col))) %>%
     group_modify(~ fit_quasipoisson(.x, t_col = "t", y_col = "y")) %>%
     ungroup() %>%
-    select(all_of(group_col), K_quasipoisson = K_qp)
+    select(all_of(group_col), K_quasipoisson = K_qp,
+           K_quasipoisson_lwr = K_qp_lwr, K_quasipoisson_upr = K_qp_upr,
+           qp_share_converged = share_converged) %>%
+    left_join(obs %>% select(all_of(group_col), observed), by = group_col) %>%
+    mutate(diverges = is.na(K_quasipoisson) | K_quasipoisson > qp_max_ratio * observed,
+           across(starts_with("K_quasipoisson"), ~ ifelse(diverges, NA_real_, .x))) %>%
+    select(-observed, -diverges)
+
+  bad <- qp[[group_col]][is.na(qp$K_quasipoisson)]
+  if (length(bad) > 0) message("Quasi-Poisson K diverges (set to NA): ", paste(bad, collapse = ", "))
 
   fits %>%
     mutate(a_ci = map2(fit, data, ~ get_a_ci_boot(.x, level = 0.95,
@@ -121,7 +139,8 @@ group_table <- function(fits, series, group_col) {
     mutate(missing      = pmax(0, a_estimate - observed),
            complete_pct = 100 * observed / a_estimate) %>%
     select(all_of(group_col), model, a_estimate, a_lwr, a_upr, observed, missing,
-           complete_pct, AIC, K_quasipoisson, year_min, year_latest) %>%
+           complete_pct, AIC, K_quasipoisson, K_quasipoisson_lwr, K_quasipoisson_upr,
+           qp_share_converged, year_min, year_latest) %>%
     arrange(.data[[group_col]], model)
 }
 

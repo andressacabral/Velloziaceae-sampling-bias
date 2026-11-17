@@ -132,27 +132,74 @@ predict_curve_band <- function(fit,
 # quasi-Poisson GLM with cubic polynomial in t. Does not assume a sigmoid
 # shape and handles overdispersion from monograph bursts. K is estimated
 # by integrating projected annual counts 300 years into the future.
-# If QPois K ≈ Logistic K → logistic estimate is credible.
+#
+# zero_fill = TRUE (default): years without any description between the first
+# and the last description enter the model as 0, as in Bebber et al. (2007).
+# build_cumulative() only keeps years with >= 1 description, so without this
+# the model only sees "good" years.
+#
+# CI for K: parametric bootstrap. B coefficient vectors are drawn from a
+# multivariate normal with the GLM's coefficients and covariance matrix (the
+# covariance already includes the quasi-Poisson dispersion); for each draw the
+# projected annual counts are summed. Percentile interval, same logic as
+# get_a_ci_boot() for the logistic model. As there, implausible draws are
+# filtered out: only draws whose projected annual count has dropped to ~0 by
+# the end of the projection (< conv_tol species/yr) are kept, i.e. curves that
+# actually reach an asymptote. Draws where the cubic keeps rising give K -> Inf.
+# share_converged = proportion of draws kept; if < min_share, no CI is given.
 
 fit_quasipoisson <- function(df_annual, t_col = "t", y_col = "y",
-                             project_years = 300) {
+                             project_years = 300, zero_fill = TRUE,
+                             level = 0.95, B = 1000,
+                             conv_tol = 0.01, min_share = 0.5) {
+  na_out <- tibble::tibble(K_qp = NA_real_, K_qp_lwr = NA_real_, K_qp_upr = NA_real_,
+                           share_converged = NA_real_, completeness_qp = NA_real_)
   df <- df_annual %>%
     mutate(t_num = suppressWarnings(as.numeric(.data[[t_col]])),
            y_ann = suppressWarnings(as.numeric(.data[[y_col]]))) %>%
-    filter(!is.na(t_num), !is.na(y_ann))
-  if (nrow(df) < 6) return(tibble::tibble(K_qp = NA_real_, completeness_qp = NA_real_))
-  s_obs  <- max(cumsum(df$y_ann), na.rm = TRUE)
+    filter(!is.na(t_num), !is.na(y_ann)) %>%
+    select(t_num, y_ann)
+  if (nrow(df) < 6) return(na_out)
+  s_obs <- sum(df$y_ann, na.rm = TRUE)
+
+  if (zero_fill) {
+    df <- tibble::tibble(t_num = seq(min(df$t_num), max(df$t_num))) %>%
+      left_join(df, by = "t_num") %>%
+      mutate(y_ann = dplyr::coalesce(y_ann, 0))
+  }
+
   qp_fit <- tryCatch(
     glm(y_ann ~ poly(t_num, 3), data = df, family = quasipoisson(link = "log")),
     error = function(e) NULL
   )
-  if (is.null(qp_fit)) return(tibble::tibble(K_qp = NA_real_, completeness_qp = NA_real_))
+  if (is.null(qp_fit)) return(na_out)
+
   t_future <- seq(max(df$t_num) + 1, max(df$t_num) + project_years)
-  pred_ann <- pmax(predict(qp_fit,
-                           newdata = data.frame(t_num = t_future),
-                           type = "response"), 0)
-  K_qp <- s_obs + sum(pred_ann)
-  tibble::tibble(K_qp = round(K_qp, 0), completeness_qp = round(s_obs / K_qp, 3))
+  newd     <- data.frame(t_num = t_future)
+  pred_ann <- pmax(predict(qp_fit, newdata = newd, type = "response"), 0)
+  K_qp     <- s_obs + sum(pred_ann)
+
+  # parametric bootstrap
+  X  <- model.matrix(delete.response(terms(qp_fit)), model.frame(delete.response(terms(qp_fit)), newd))
+  vc <- tryCatch(vcov(qp_fit), error = function(e) NULL)
+  K_lwr <- K_upr <- share <- NA_real_
+  if (!is.null(vc)) {
+    draws <- tryCatch(MASS::mvrnorm(B, mu = coef(qp_fit), Sigma = vc), error = function(e) NULL)
+    if (!is.null(draws)) {
+      eta   <- pmin(draws %*% t(X), 50)             # B x project_years, log scale
+      conv  <- exp(eta[, ncol(eta)]) < conv_tol     # curve has gone to ~0
+      share <- mean(conv)
+      if (share >= min_share) {
+        K_draws <- s_obs + rowSums(exp(eta[conv, , drop = FALSE]))
+        alpha   <- 1 - level
+        K_lwr   <- unname(quantile(K_draws, alpha / 2))
+        K_upr   <- unname(quantile(K_draws, 1 - alpha / 2))
+      }
+    }
+  }
+
+  tibble::tibble(K_qp = round(K_qp, 0), K_qp_lwr = round(K_lwr, 0), K_qp_upr = round(K_upr, 0),
+                 share_converged = round(share, 2), completeness_qp = round(s_obs / K_qp, 3))
 }
 
 # --- Model fitting ----------------------------------------------------------
