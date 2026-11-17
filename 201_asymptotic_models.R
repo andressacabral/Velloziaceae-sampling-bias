@@ -212,6 +212,26 @@ band_genus  <- band_groups(fits_genus,  "tax_genus")
 save(band_region, file = "output/band_region_df.rda")
 save(band_genus,  file = "output/band_genus_df.rda")
 
+# Quasi-Poisson bands (cumulative scale), same extrapolation horizon.
+# Groups where the QP projection does not converge get no band (NULL).
+band_qp_overall <- predict_qp_band(peryear, year_min = min(peryear$year),
+                                   extra_years = extra_years_overall, B = 4000)
+
+band_qp_groups <- function(series, group_col) {
+  series %>%
+    group_by(across(all_of(group_col))) %>%
+    group_modify(~ {
+      b <- predict_qp_band(.x, year_min = min(.x$year), extra_years = extra_years_groups,
+                           B = 4000)
+      if (is.null(b)) tibble() else b
+    }) %>%
+    ungroup()
+}
+band_qp_region <- band_qp_groups(peryear_region, "region")
+band_qp_genus  <- band_qp_groups(peryear_genus,  "tax_genus")
+
+save(band_qp_overall, band_qp_region, band_qp_genus, file = "output/band_qp_df.rda")
+
 # --- 6. Diagnostic plots (not for the manuscript) ---------------------------
 p_overall <- ggplot() +
   geom_ribbon(data = band_overall_df,

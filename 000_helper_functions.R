@@ -292,3 +292,54 @@ build_cumulative <- function(dat, group = NULL, year_col = "year_first_descripti
                   t = year - min(year) + 1) %>%
     dplyr::ungroup()
 }
+
+# --- Quasi-Poisson curve + CI band on the cumulative scale -------------------
+# For figures. Fits the same model as fit_quasipoisson() and returns, per
+# calendar year from the first description to `extra_years` after the last
+# one, the cumulative number of species (cumulative sum of fitted / projected
+# annual counts) with a percentile band from the converged bootstrap draws.
+# With a log link the fitted counts sum to the observed total, so the curve
+# passes through the observed number in the last year. As for K, the band
+# describes the uncertainty of the projection: it starts at the observed total
+# in the last year (observed total + cumulative projected counts per draw);
+# inside the observed window lwr = upr = fitted curve.
+predict_qp_band <- function(df_annual, year_min, t_col = "t", y_col = "y",
+                            extra_years = 150, project_years = 300,
+                            level = 0.95, B = 1000,
+                            conv_tol = 0.01, min_share = 0.5) {
+  df <- df_annual %>%
+    mutate(t_num = as.numeric(.data[[t_col]]), y_ann = as.numeric(.data[[y_col]])) %>%
+    select(t_num, y_ann)
+  df <- tibble::tibble(t_num = seq(min(df$t_num), max(df$t_num))) %>%
+    left_join(df, by = "t_num") %>%
+    mutate(y_ann = dplyr::coalesce(y_ann, 0))
+
+  fit <- tryCatch(glm(y_ann ~ poly(t_num, 3), data = df, family = quasipoisson(link = "log")),
+                  error = function(e) NULL)
+  if (is.null(fit)) return(NULL)
+
+  t_all  <- seq(min(df$t_num), max(df$t_num) + project_years)
+  newd   <- data.frame(t_num = t_all)
+  tt     <- delete.response(terms(fit))
+  X      <- model.matrix(tt, model.frame(tt, newd))
+  draws  <- tryCatch(MASS::mvrnorm(B, mu = coef(fit), Sigma = vcov(fit)), error = function(e) NULL)
+  if (is.null(draws)) return(NULL)
+  eta    <- pmin(draws %*% t(X), 50)
+  conv   <- exp(eta[, ncol(eta)]) < conv_tol
+  if (mean(conv) < min_share) return(NULL)
+
+  keep_t <- t_all <= max(df$t_num) + extra_years
+  fut    <- keep_t & t_all > max(df$t_num)
+  s_obs  <- sum(df$y_ann)
+  y_hat  <- cumsum(as.numeric(exp(X[keep_t, , drop = FALSE] %*% coef(fit))))
+  cum_d  <- s_obs + t(apply(exp(eta[conv, fut, drop = FALSE]), 1, cumsum))
+  alpha  <- 1 - level
+  n_obs  <- sum(keep_t & !fut)
+
+  tibble::tibble(t     = t_all[keep_t],
+                 year  = t_to_year(t_all[keep_t], year_min),
+                 y_hat = y_hat,
+                 lwr   = c(y_hat[seq_len(n_obs)], apply(cum_d, 2, quantile, probs = alpha / 2)),
+                 upr   = c(y_hat[seq_len(n_obs)], apply(cum_d, 2, quantile, probs = 1 - alpha / 2)),
+                 model = "QuasiPoisson")
+}

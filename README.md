@@ -29,7 +29,7 @@ Run the scripts in numerical order from the project root
 | `101_prepare_species_list.R` | done | Cleans species list, assigns region, year of first description (basionym year for recombinations) |
 | `201_asymptotic_models.R` | done | Logistic / Michaelis-Menten fits, total and per region / genus |
 | `202_hindcast.R` | done | Model validation: fit with data up to 1980/1990/2000/2005, predict descriptions until 2025, compare logistic, Michaelis-Menten and quasi-Poisson (with/without zero years) |
-| `301_figure_overall_accumulation.R` | to do | Main accumulation figure |
+| `301_figure_overall_accumulation.R` | done | Figure 1: accumulation + logistic and quasi-Poisson curves (set `main_model` once the main estimate is decided) |
 
 ## Notes on the data
 
